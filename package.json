@@ -1,0 +1,19 @@
+{
+	"name": "musee-api",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"dev": "bun run --watch src/index.ts",
+		"start": "bun run src/index.ts",
+		"test": "bun test",
+		"check": "bunx biome check --write .",
+		"lint": "bunx biome lint ."
+	},
+	"dependencies": {
+		"hono": "^4.7.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.0",
+		"@types/bun": "latest"
+	}
+}

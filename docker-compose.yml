@@ -1,0 +1,11 @@
+services:
+  musee-api:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - musee-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  musee-data:
