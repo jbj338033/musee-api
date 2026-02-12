@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
-import { Hono } from "hono";
+import { swaggerUI } from "@hono/swagger-ui";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { config } from "./config";
 import { initDb } from "./db";
 import { type TaskMap, downloadRoutes } from "./download";
@@ -10,17 +11,19 @@ mkdirSync(config.audioDir, { recursive: true });
 
 const db = initDb();
 const tasks: TaskMap = new Map();
-const app = new Hono();
-
-app.get("/", (c) => c.json({ name: "musee-api", version: "0.1.0" }));
+const app = new OpenAPIHono();
 
 downloadRoutes(app, db, tasks);
 tracksRoutes(app, db);
 lyricsRoutes(app, db);
 
-export default {
-	port: config.port,
-	fetch: app.fetch.bind(app),
-};
+app.doc("/doc", {
+	openapi: "3.1.0",
+	info: { title: "musee-api", version: "0.1.0", description: "Personal music download server" },
+});
+
+app.get("/swagger", swaggerUI({ url: "/doc" }));
+
+export default app;
 
 console.log(`musee-api listening on :${config.port}`);

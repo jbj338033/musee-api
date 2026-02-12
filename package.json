@@ -10,6 +10,8 @@
 		"lint": "bunx biome lint ."
 	},
 	"dependencies": {
+		"@hono/swagger-ui": "^0.5.3",
+		"@hono/zod-openapi": "0.18.4",
 		"hono": "^4.7.0"
 	},
 	"devDependencies": {

@@ -1,3 +1,46 @@
+import { z } from "@hono/zod-openapi";
+
+export const TrackSchema = z
+	.object({
+		id: z.number().openapi({ example: 1 }),
+		title: z.string().openapi({ example: "입춘 (Let Me Love My Youth)" }),
+		artist: z.string().openapi({ example: "한로로" }),
+		album: z.string().nullable().openapi({ example: null }),
+		duration: z.number().nullable().openapi({ example: 180 }),
+		youtube_url: z
+			.string()
+			.nullable()
+			.openapi({ example: "https://www.youtube.com/watch?v=abc123" }),
+		youtube_id: z.string().nullable().openapi({ example: "abc123" }),
+		filename: z.string().openapi({ example: "abc123.opus" }),
+		file_size: z.number().nullable().openapi({ example: 5242880 }),
+		format: z.string().openapi({ example: "opus" }),
+		created_at: z.string().openapi({ example: "2026-01-01 00:00:00" }),
+		updated_at: z.string().openapi({ example: "2026-01-01 00:00:00" }),
+	})
+	.openapi("Track");
+
+export const LyricsSchema = z
+	.object({
+		id: z.number().openapi({ example: 1 }),
+		track_id: z.number().openapi({ example: 1 }),
+		content: z.string().openapi({ example: "[00:12.34] 가사 첫 줄" }),
+		is_synced: z.number().openapi({ example: 1 }),
+		created_at: z.string().openapi({ example: "2026-01-01 00:00:00" }),
+		updated_at: z.string().openapi({ example: "2026-01-01 00:00:00" }),
+	})
+	.openapi("Lyrics");
+
+export const ErrorSchema = z
+	.object({
+		error: z.string().openapi({ example: "Not found" }),
+	})
+	.openapi("Error");
+
+export const TrackIdParam = z.object({
+	id: z.string().openapi({ param: { name: "id", in: "path" }, example: "1" }),
+});
+
 export interface Track {
 	id: number;
 	title: string;

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { initDb } from "./db";
 import { tracksRoutes } from "./tracks";
 
@@ -10,12 +10,12 @@ const TEST_AUDIO_DIR = join(import.meta.dir, "..", "data", "test-audio");
 
 describe("tracks routes", () => {
 	let db: Database;
-	let app: Hono;
+	let app: OpenAPIHono;
 
 	beforeEach(() => {
 		db = initDb(":memory:");
 		mkdirSync(TEST_AUDIO_DIR, { recursive: true });
-		app = new Hono();
+		app = new OpenAPIHono();
 		tracksRoutes(app, db, TEST_AUDIO_DIR);
 
 		db.run(

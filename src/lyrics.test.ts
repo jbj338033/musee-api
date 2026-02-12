@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { Hono } from "hono";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { initDb } from "./db";
 import { isSyncedLrc, lyricsRoutes, parseLrc, searchLrclib } from "./lyrics";
 
@@ -115,7 +115,7 @@ describe("searchLrclib", () => {
 
 describe("lyrics routes", () => {
 	let db: Database;
-	let app: Hono;
+	let app: OpenAPIHono;
 
 	beforeEach(() => {
 		db = initDb(":memory:");
@@ -125,7 +125,7 @@ describe("lyrics routes", () => {
 			"test.opus",
 			"opus",
 		]);
-		app = new Hono();
+		app = new OpenAPIHono();
 		lyricsRoutes(app, db);
 	});
 

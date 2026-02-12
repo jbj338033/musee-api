@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
-import type { Hono } from "hono";
+import { z } from "@hono/zod-openapi";
+import { type OpenAPIHono, createRoute } from "@hono/zod-openapi";
+import { ErrorSchema, LyricsSchema, TrackIdParam } from "./types";
 import type { LrcLine, LrclibResult, Lyrics } from "./types";
 
 const LRC_LINE_REGEX = /^\[(\d{2}):(\d{2})\.(\d{2,3})\]\s?(.*)/;
@@ -51,9 +53,93 @@ export async function searchLrclib(
 	}
 }
 
-export function lyricsRoutes(app: Hono, db: Database) {
-	app.get("/tracks/:id/lyrics", (c) => {
-		const trackId = Number(c.req.param("id"));
+const getLyrics = createRoute({
+	method: "get",
+	path: "/tracks/{id}/lyrics",
+	tags: ["Lyrics"],
+	summary: "가사 조회",
+	request: { params: TrackIdParam },
+	responses: {
+		200: { description: "가사", content: { "application/json": { schema: LyricsSchema } } },
+		404: { description: "가사 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+const putLyrics = createRoute({
+	method: "put",
+	path: "/tracks/{id}/lyrics",
+	tags: ["Lyrics"],
+	summary: "가사 등록/수정",
+	request: {
+		params: TrackIdParam,
+		body: {
+			content: {
+				"application/json": {
+					schema: z.object({
+						content: z.string().openapi({ example: "[00:12.34] 가사 첫 줄" }),
+						is_synced: z.boolean().optional().openapi({ example: true }),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: { description: "저장된 가사", content: { "application/json": { schema: LyricsSchema } } },
+		404: { description: "트랙 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+const uploadLrc = createRoute({
+	method: "post",
+	path: "/tracks/{id}/lyrics/upload",
+	tags: ["Lyrics"],
+	summary: "LRC 파일 업로드",
+	request: {
+		params: TrackIdParam,
+		body: { content: { "multipart/form-data": { schema: z.object({ file: z.any() }) } } },
+	},
+	responses: {
+		200: { description: "저장된 가사", content: { "application/json": { schema: LyricsSchema } } },
+		400: { description: "파일 없음", content: { "application/json": { schema: ErrorSchema } } },
+		404: { description: "트랙 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+const deleteLyrics = createRoute({
+	method: "delete",
+	path: "/tracks/{id}/lyrics",
+	tags: ["Lyrics"],
+	summary: "가사 삭제",
+	request: { params: TrackIdParam },
+	responses: {
+		204: { description: "삭제 완료" },
+		404: { description: "가사 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+function upsertLyrics(db: Database, trackId: number, content: string, synced: boolean): Lyrics {
+	const existing = db
+		.query<{ id: number }, [number]>("SELECT id FROM lyrics WHERE track_id = ?")
+		.get(trackId);
+
+	if (existing) {
+		return db
+			.query<Lyrics, [string, number, number]>(
+				"UPDATE lyrics SET content = ?, is_synced = ?, updated_at = datetime('now') WHERE track_id = ? RETURNING *",
+			)
+			.get(content, synced ? 1 : 0, trackId) as Lyrics;
+	}
+
+	return db
+		.query<Lyrics, [number, string, number]>(
+			"INSERT INTO lyrics (track_id, content, is_synced) VALUES (?, ?, ?) RETURNING *",
+		)
+		.get(trackId, content, synced ? 1 : 0) as Lyrics;
+}
+
+export function lyricsRoutes(app: OpenAPIHono, db: Database) {
+	app.openapi(getLyrics, (c) => {
+		const trackId = Number(c.req.valid("param").id);
 		const lyrics = db
 			.query<Lyrics, [number]>("SELECT * FROM lyrics WHERE track_id = ?")
 			.get(trackId);
@@ -61,41 +147,21 @@ export function lyricsRoutes(app: Hono, db: Database) {
 		return c.json(lyrics);
 	});
 
-	app.put("/tracks/:id/lyrics", async (c) => {
-		const trackId = Number(c.req.param("id"));
+	app.openapi(putLyrics, async (c) => {
+		const trackId = Number(c.req.valid("param").id);
 		const track = db
 			.query<{ id: number }, [number]>("SELECT id FROM tracks WHERE id = ?")
 			.get(trackId);
 		if (!track) return c.json({ error: "Track not found" }, 404);
 
-		const body = await c.req.json<{ content: string; is_synced?: boolean }>();
+		const body = c.req.valid("json");
 		const synced = body.is_synced ?? isSyncedLrc(body.content);
-
-		const existing = db
-			.query<{ id: number }, [number]>("SELECT id FROM lyrics WHERE track_id = ?")
-			.get(trackId);
-
-		if (existing) {
-			db.run(
-				"UPDATE lyrics SET content = ?, is_synced = ?, updated_at = datetime('now') WHERE track_id = ?",
-				[body.content, synced ? 1 : 0, trackId],
-			);
-		} else {
-			db.run("INSERT INTO lyrics (track_id, content, is_synced) VALUES (?, ?, ?)", [
-				trackId,
-				body.content,
-				synced ? 1 : 0,
-			]);
-		}
-
-		const lyrics = db
-			.query<Lyrics, [number]>("SELECT * FROM lyrics WHERE track_id = ?")
-			.get(trackId);
+		const lyrics = upsertLyrics(db, trackId, body.content, synced);
 		return c.json(lyrics);
 	});
 
-	app.post("/tracks/:id/lyrics/upload", async (c) => {
-		const trackId = Number(c.req.param("id"));
+	app.openapi(uploadLrc, async (c) => {
+		const trackId = Number(c.req.valid("param").id);
 		const track = db
 			.query<{ id: number }, [number]>("SELECT id FROM tracks WHERE id = ?")
 			.get(trackId);
@@ -109,32 +175,12 @@ export function lyricsRoutes(app: Hono, db: Database) {
 
 		const content = await file.text();
 		const synced = isSyncedLrc(content);
-
-		const existing = db
-			.query<{ id: number }, [number]>("SELECT id FROM lyrics WHERE track_id = ?")
-			.get(trackId);
-
-		if (existing) {
-			db.run(
-				"UPDATE lyrics SET content = ?, is_synced = ?, updated_at = datetime('now') WHERE track_id = ?",
-				[content, synced ? 1 : 0, trackId],
-			);
-		} else {
-			db.run("INSERT INTO lyrics (track_id, content, is_synced) VALUES (?, ?, ?)", [
-				trackId,
-				content,
-				synced ? 1 : 0,
-			]);
-		}
-
-		const lyrics = db
-			.query<Lyrics, [number]>("SELECT * FROM lyrics WHERE track_id = ?")
-			.get(trackId);
+		const lyrics = upsertLyrics(db, trackId, content, synced);
 		return c.json(lyrics);
 	});
 
-	app.delete("/tracks/:id/lyrics", (c) => {
-		const trackId = Number(c.req.param("id"));
+	app.openapi(deleteLyrics, (c) => {
+		const trackId = Number(c.req.valid("param").id);
 		const existing = db
 			.query<{ id: number }, [number]>("SELECT id FROM lyrics WHERE track_id = ?")
 			.get(trackId);

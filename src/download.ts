@@ -1,8 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
-import type { Hono } from "hono";
+import { z } from "@hono/zod-openapi";
+import { type OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { config } from "./config";
 import { searchLrclib } from "./lyrics";
+import { ErrorSchema } from "./types";
 import type { DownloadTask, Track } from "./types";
 
 export type TaskMap = Map<string, DownloadTask>;
@@ -121,10 +123,83 @@ async function runDownload(task: DownloadTask, youtubeId: string, db: Database, 
 	}
 }
 
-export function downloadRoutes(app: Hono, db: Database, tasks: TaskMap) {
-	app.post("/download", async (c) => {
-		const body = await c.req.json<{ url: string; format?: string }>();
-		const youtubeId = extractYoutubeId(body.url);
+const postDownload = createRoute({
+	method: "post",
+	path: "/download",
+	tags: ["Download"],
+	summary: "YouTube URL로 오디오 다운로드 시작",
+	request: {
+		body: {
+			content: {
+				"application/json": {
+					schema: z.object({
+						url: z
+							.string()
+							.url()
+							.openapi({ example: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }),
+						format: z.string().optional().openapi({ example: "opus" }),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		202: {
+			description: "다운로드 태스크 생성됨",
+			content: {
+				"application/json": {
+					schema: z.object({ task_id: z.string().uuid() }),
+				},
+			},
+		},
+		400: {
+			description: "잘못된 YouTube URL",
+			content: { "application/json": { schema: ErrorSchema } },
+		},
+		409: {
+			description: "이미 존재하는 트랙",
+			content: {
+				"application/json": {
+					schema: z.object({ error: z.string(), track_id: z.number() }),
+				},
+			},
+		},
+	},
+});
+
+const getStatus = createRoute({
+	method: "get",
+	path: "/download/{taskId}/status",
+	tags: ["Download"],
+	summary: "다운로드 진행 상태 조회",
+	request: {
+		params: z.object({
+			taskId: z.string().openapi({ param: { name: "taskId", in: "path" }, example: "uuid" }),
+		}),
+	},
+	responses: {
+		200: {
+			description: "태스크 상태",
+			content: {
+				"application/json": {
+					schema: z.object({
+						id: z.string().uuid(),
+						status: z.enum(["pending", "downloading", "processing", "completed", "failed"]),
+						progress: z.number(),
+						track_id: z.number().nullable(),
+						error: z.string().nullable(),
+					}),
+				},
+			},
+		},
+		404: { description: "태스크 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+export function downloadRoutes(app: OpenAPIHono, db: Database, tasks: TaskMap) {
+	app.openapi(postDownload, async (c) => {
+		const { url, format: fmt } = c.req.valid("json");
+		const youtubeId = extractYoutubeId(url);
 
 		if (!youtubeId) {
 			return c.json({ error: "Invalid YouTube URL" }, 400);
@@ -137,15 +212,16 @@ export function downloadRoutes(app: Hono, db: Database, tasks: TaskMap) {
 			return c.json({ error: "Track already exists", track_id: existing.id }, 409);
 		}
 
-		const format = body.format ?? config.defaultFormat;
-		const task = createTask(tasks, body.url);
+		const format = fmt ?? config.defaultFormat;
+		const task = createTask(tasks, url);
 		runDownload(task, youtubeId, db, format);
 
 		return c.json({ task_id: task.id }, 202);
 	});
 
-	app.get("/download/:taskId/status", (c) => {
-		const task = tasks.get(c.req.param("taskId"));
+	app.openapi(getStatus, (c) => {
+		const { taskId } = c.req.valid("param");
+		const task = tasks.get(taskId);
 		if (!task) return c.json({ error: "Task not found" }, 404);
 
 		return c.json({

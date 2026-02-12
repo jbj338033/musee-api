@@ -1,15 +1,120 @@
 import type { Database } from "bun:sqlite";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { Hono } from "hono";
+import { z } from "@hono/zod-openapi";
+import { type OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { config } from "./config";
+import { ErrorSchema, TrackIdParam, TrackSchema } from "./types";
 import type { Track } from "./types";
 
-export function tracksRoutes(app: Hono, db: Database, audioDir = config.audioDir) {
-	app.get("/tracks", (c) => {
-		const q = c.req.query("q");
-		const limit = Number(c.req.query("limit") ?? 50);
-		const offset = Number(c.req.query("offset") ?? 0);
+const listTracks = createRoute({
+	method: "get",
+	path: "/tracks",
+	tags: ["Tracks"],
+	summary: "트랙 목록 조회",
+	request: {
+		query: z.object({
+			q: z.string().optional().openapi({ example: "한로로" }),
+			limit: z.string().optional().openapi({ example: "50" }),
+			offset: z.string().optional().openapi({ example: "0" }),
+		}),
+	},
+	responses: {
+		200: {
+			description: "트랙 목록",
+			content: {
+				"application/json": {
+					schema: z.object({
+						data: z.array(TrackSchema),
+						total: z.number(),
+						limit: z.number(),
+						offset: z.number(),
+					}),
+				},
+			},
+		},
+	},
+});
+
+const getTrack = createRoute({
+	method: "get",
+	path: "/tracks/{id}",
+	tags: ["Tracks"],
+	summary: "트랙 상세 조회",
+	request: { params: TrackIdParam },
+	responses: {
+		200: { description: "트랙 상세", content: { "application/json": { schema: TrackSchema } } },
+		404: { description: "트랙 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+const patchTrack = createRoute({
+	method: "patch",
+	path: "/tracks/{id}",
+	tags: ["Tracks"],
+	summary: "트랙 메타데이터 수정",
+	request: {
+		params: TrackIdParam,
+		body: {
+			content: {
+				"application/json": {
+					schema: z.object({
+						title: z.string().optional(),
+						artist: z.string().optional(),
+						album: z.string().optional(),
+					}),
+				},
+			},
+		},
+	},
+	responses: {
+		200: { description: "수정된 트랙", content: { "application/json": { schema: TrackSchema } } },
+		404: { description: "트랙 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+const deleteTrack = createRoute({
+	method: "delete",
+	path: "/tracks/{id}",
+	tags: ["Tracks"],
+	summary: "트랙 삭제 (파일+DB)",
+	request: { params: TrackIdParam },
+	responses: {
+		204: { description: "삭제 완료" },
+		404: { description: "트랙 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+const streamTrack = createRoute({
+	method: "get",
+	path: "/tracks/{id}/stream",
+	tags: ["Tracks"],
+	summary: "오디오 스트리밍 (Range 지원)",
+	request: { params: TrackIdParam },
+	responses: {
+		200: { description: "오디오 전체" },
+		206: { description: "오디오 부분 (Range)" },
+		404: { description: "트랙 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+const downloadFile = createRoute({
+	method: "get",
+	path: "/tracks/{id}/file",
+	tags: ["Tracks"],
+	summary: "오디오 파일 다운로드",
+	request: { params: TrackIdParam },
+	responses: {
+		200: { description: "오디오 파일" },
+		404: { description: "트랙 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
+export function tracksRoutes(app: OpenAPIHono, db: Database, audioDir = config.audioDir) {
+	app.openapi(listTracks, (c) => {
+		const { q, limit: l, offset: o } = c.req.valid("query");
+		const limit = Number(l ?? 50);
+		const offset = Number(o ?? 0);
 
 		let data: Track[];
 		let total: number;
@@ -38,19 +143,19 @@ export function tracksRoutes(app: Hono, db: Database, audioDir = config.audioDir
 		return c.json({ data, total, limit, offset });
 	});
 
-	app.get("/tracks/:id", (c) => {
-		const id = Number(c.req.param("id"));
+	app.openapi(getTrack, (c) => {
+		const id = Number(c.req.valid("param").id);
 		const track = db.query<Track, [number]>("SELECT * FROM tracks WHERE id = ?").get(id);
 		if (!track) return c.json({ error: "Track not found" }, 404);
 		return c.json(track);
 	});
 
-	app.patch("/tracks/:id", async (c) => {
-		const id = Number(c.req.param("id"));
+	app.openapi(patchTrack, async (c) => {
+		const id = Number(c.req.valid("param").id);
 		const existing = db.query<Track, [number]>("SELECT * FROM tracks WHERE id = ?").get(id);
 		if (!existing) return c.json({ error: "Track not found" }, 404);
 
-		const body = await c.req.json<Partial<Pick<Track, "title" | "artist" | "album">>>();
+		const body = c.req.valid("json");
 		const updates: string[] = [];
 		const values: (string | number)[] = [];
 
@@ -67,21 +172,20 @@ export function tracksRoutes(app: Hono, db: Database, audioDir = config.audioDir
 			values.push(body.album);
 		}
 
-		if (updates.length === 0) {
-			return c.json(existing);
-		}
+		if (updates.length === 0) return c.json(existing);
 
 		updates.push("updated_at = datetime('now')");
 		values.push(id);
-
-		db.run(`UPDATE tracks SET ${updates.join(", ")} WHERE id = ?`, values);
-
-		const updated = db.query<Track, [number]>("SELECT * FROM tracks WHERE id = ?").get(id);
+		const updated = db
+			.query<Track, (string | number)[]>(
+				`UPDATE tracks SET ${updates.join(", ")} WHERE id = ? RETURNING *`,
+			)
+			.get(...values) as Track;
 		return c.json(updated);
 	});
 
-	app.delete("/tracks/:id", (c) => {
-		const id = Number(c.req.param("id"));
+	app.openapi(deleteTrack, (c) => {
+		const id = Number(c.req.valid("param").id);
 		const track = db.query<Track, [number]>("SELECT * FROM tracks WHERE id = ?").get(id);
 		if (!track) return c.json({ error: "Track not found" }, 404);
 
@@ -93,8 +197,8 @@ export function tracksRoutes(app: Hono, db: Database, audioDir = config.audioDir
 		return c.body(null, 204);
 	});
 
-	app.get("/tracks/:id/stream", (c) => {
-		const id = Number(c.req.param("id"));
+	app.openapi(streamTrack, (c) => {
+		const id = Number(c.req.valid("param").id);
 		const track = db.query<Track, [number]>("SELECT * FROM tracks WHERE id = ?").get(id);
 		if (!track) return c.json({ error: "Track not found" }, 404);
 
@@ -131,8 +235,8 @@ export function tracksRoutes(app: Hono, db: Database, audioDir = config.audioDir
 		});
 	});
 
-	app.get("/tracks/:id/file", (c) => {
-		const id = Number(c.req.param("id"));
+	app.openapi(downloadFile, (c) => {
+		const id = Number(c.req.valid("param").id);
 		const track = db.query<Track, [number]>("SELECT * FROM tracks WHERE id = ?").get(id);
 		if (!track) return c.json({ error: "Track not found" }, 404);
 
