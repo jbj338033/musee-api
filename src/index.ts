@@ -20,7 +20,7 @@ lyricsRoutes(app, db);
 
 export default {
 	port: config.port,
-	fetch: app.fetch,
+	fetch: app.fetch.bind(app),
 };
 
 console.log(`musee-api listening on :${config.port}`);
