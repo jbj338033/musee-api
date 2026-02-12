@@ -19,6 +19,7 @@ export function initDb(target: string | Database = config.dbPath): Database {
 			filename    TEXT NOT NULL,
 			file_size   INTEGER,
 			format      TEXT NOT NULL DEFAULT 'opus',
+			thumbnail   TEXT,
 			created_at  TEXT NOT NULL DEFAULT (datetime('now')),
 			updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 		)

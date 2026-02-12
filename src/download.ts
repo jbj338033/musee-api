@@ -89,16 +89,41 @@ async function runDownload(task: DownloadTask, youtubeId: string, db: Database, 
 
 		task.status = "processing";
 
+		let thumbnail: string | null = null;
+		try {
+			const thumbProc = Bun.spawn(
+				[
+					config.ytDlpPath,
+					"--skip-download",
+					"--write-thumbnail",
+					"--convert-thumbnails",
+					"jpg",
+					"-o",
+					join(config.audioDir, `${youtubeId}`),
+					task.url,
+				],
+				{ stdout: "pipe", stderr: "pipe" },
+			);
+			await thumbProc.exited;
+			const thumbPath = join(config.audioDir, `${youtubeId}.jpg`);
+			if (Bun.file(thumbPath).size > 0) {
+				thumbnail = `${youtubeId}.jpg`;
+			}
+		} catch {}
+
 		const file = Bun.file(outputPath);
 		const fileSize = file.size;
 
 		const result = db
-			.query<Track, [string, string, number | null, string, string, string, number, string]>(
-				`INSERT INTO tracks (title, artist, duration, youtube_url, youtube_id, filename, file_size, format)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			.query<
+				Track,
+				[string, string, number | null, string, string, string, number, string, string | null]
+			>(
+				`INSERT INTO tracks (title, artist, duration, youtube_url, youtube_id, filename, file_size, format, thumbnail)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 				 RETURNING *`,
 			)
-			.get(title, artist, duration, task.url, youtubeId, filename, fileSize, format);
+			.get(title, artist, duration, task.url, youtubeId, filename, fileSize, format, thumbnail);
 
 		if (result) {
 			task.trackId = result.id;

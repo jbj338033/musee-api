@@ -15,6 +15,7 @@ export const TrackSchema = z
 		filename: z.string().openapi({ example: "abc123.opus" }),
 		file_size: z.number().nullable().openapi({ example: 5242880 }),
 		format: z.string().openapi({ example: "opus" }),
+		thumbnail: z.string().nullable().openapi({ example: "abc123.jpg" }),
 		created_at: z.string().openapi({ example: "2026-01-01 00:00:00" }),
 		updated_at: z.string().openapi({ example: "2026-01-01 00:00:00" }),
 	})
@@ -52,6 +53,7 @@ export interface Track {
 	filename: string;
 	file_size: number | null;
 	format: string;
+	thumbnail: string | null;
 	created_at: string;
 	updated_at: string;
 }

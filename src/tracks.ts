@@ -110,6 +110,18 @@ const downloadFile = createRoute({
 	},
 });
 
+const getCover = createRoute({
+	method: "get",
+	path: "/tracks/{id}/cover",
+	tags: ["Tracks"],
+	summary: "커버 이미지",
+	request: { params: TrackIdParam },
+	responses: {
+		200: { description: "커버 이미지 (JPEG)" },
+		404: { description: "커버 없음", content: { "application/json": { schema: ErrorSchema } } },
+	},
+});
+
 export function tracksRoutes(app: OpenAPIHono, db: Database, audioDir = config.audioDir) {
 	app.openapi(listTracks, (c) => {
 		const { q, limit: l, offset: o } = c.req.valid("query");
@@ -245,6 +257,22 @@ export function tracksRoutes(app: OpenAPIHono, db: Database, audioDir = config.a
 			headers: {
 				"Content-Disposition": `attachment; filename="${track.filename}"`,
 				"Content-Type": file.type || "audio/ogg",
+			},
+		});
+	});
+
+	app.openapi(getCover, (c) => {
+		const id = Number(c.req.valid("param").id);
+		const track = db.query<Track, [number]>("SELECT * FROM tracks WHERE id = ?").get(id);
+		if (!track?.thumbnail) return c.json({ error: "Cover not found" }, 404);
+
+		const file = Bun.file(join(audioDir, track.thumbnail));
+		if (file.size === 0) return c.json({ error: "Cover not found" }, 404);
+
+		return new Response(file, {
+			headers: {
+				"Content-Type": "image/jpeg",
+				"Cache-Control": "public, max-age=86400",
 			},
 		});
 	});
